@@ -7,16 +7,25 @@ app = Flask(__name__)
 CORS(app)
 
 
+# ============================================================
+# HOME
+# ============================================================
+
 @app.route("/")
 def home():
-    return "ReelWise AI Backend is Running"
+    return "Scroll2Skill AI Backend is Running"
 
+
+# ============================================================
+# RECOMMENDATION API
+# ============================================================
 
 @app.route("/api/recommend")
 def recommend():
 
     try:
 
+        # Run the AI recommender
         result = subprocess.run(
             ["python3", "recommender.py"],
             capture_output=True,
@@ -25,106 +34,153 @@ def recommend():
 
         output = result.stdout
 
-        # =====================================================
-        # EXTRACT TOP 5 RECOMMENDATIONS
-        # =====================================================
+        # If recommender.py failed
+        if result.returncode != 0:
 
-        recommendations = []
-
-        pattern = re.compile(
-            r"#(\d+)\s*"
-            r"Title:\s*(.*?)\s*"
-            r"Category:\s*(.*?)\s*"
-            r"Semantic:\s*([0-9.]+)\s*"
-            r"Educational:\s*([0-9.]+)\s*"
-            r"Hype:\s*([0-9.]+)\s*"
-            r"Final:\s*(-?[0-9.]+)",
-            re.MULTILINE
-        )
-
-        matches = pattern.findall(output)
-
-        for match in matches:
-
-            recommendations.append({
-                "rank": int(match[0]),
-                "title": match[1].strip(),
-                "category": match[2].strip(),
-                "semantic": float(match[3]),
-                "educational": float(match[4]),
-                "hype": float(match[5]),
-                "final": float(match[6])
+            return jsonify({
+                "success": False,
+                "error": result.stderr
             })
 
 
-        # =====================================================
-        # EXTRACT MAIN RESULT
-        # =====================================================
+        # ====================================================
+        # SECTION EXTRACTOR
+        # ====================================================
 
-        def extract_value(label):
+        def extract(start, end):
 
-            lines = output.splitlines()
+            if start not in output:
+                return ""
 
-            for i, line in enumerate(lines):
+            text = output.split(start, 1)[1]
 
-                if line.strip() == label:
+            if end in text:
+                text = text.split(end, 1)[0]
 
-                    if i + 1 < len(lines):
-                        return lines[i + 1].strip()
-
-            return ""
+            return text.strip()
 
 
-        current_reel = extract_value(
-            "CURRENT REEL:"
-        )
+        # ====================================================
+        # EXTRACT RECOMMENDATION DATA
+        # ====================================================
 
-        interest = extract_value(
+        current_reel = extract(
+            "CURRENT REEL:",
             "INTEREST DETECTED:"
         )
 
-        recommended_reel = extract_value(
+        interest = extract(
+            "INTEREST DETECTED:",
+            "WHY:"
+        )
+
+        why_interest = extract(
+            "WHY:",
             "RECOMMENDED TECH REEL:"
         )
 
-        category = extract_value(
+        recommendation = extract(
+            "RECOMMENDED TECH REEL:",
             "CATEGORY:"
         )
 
-        difficulty = extract_value(
+        category = extract(
+            "CATEGORY:",
+            "WHY THIS RECOMMENDATION:"
+        )
+
+        why_recommendation = extract(
+            "WHY THIS RECOMMENDATION:",
             "DIFFICULTY:"
         )
 
-        confidence = extract_value(
+        difficulty = extract(
+            "DIFFICULTY:",
             "CONFIDENCE:"
         )
 
+        confidence = extract(
+            "CONFIDENCE:",
+            "=" * 60
+        )
 
-        # =====================================================
-        # RETURN DATA TO FRONTEND
-        # =====================================================
+
+        # ====================================================
+        # SEMANTIC SCORE
+        # ====================================================
+
+        score_match = re.search(
+            r"semantic relevance score of\s+([0-9]+(?:\.[0-9]+)?)",
+            output,
+            re.IGNORECASE
+        )
+
+        semantic_score = 0.0
+
+        if score_match:
+
+            semantic_score = float(
+                score_match.group(1)
+            )
+
+
+        # ====================================================
+        # CLEAN TEXT
+        # ====================================================
+
+        def clean(text):
+
+            if not text:
+                return ""
+
+            return (
+                text
+                .replace("\r", "")
+                .replace("\n", " ")
+                .replace("=", "")
+                .strip()
+            )
+
+
+        current_reel = clean(current_reel)
+        interest = clean(interest)
+        why_interest = clean(why_interest)
+        recommendation = clean(recommendation)
+        category = clean(category)
+        why_recommendation = clean(why_recommendation)
+        difficulty = clean(difficulty)
+        confidence = clean(confidence)
+
+
+        # ====================================================
+        # RETURN JSON TO FRONTEND
+        # ====================================================
 
         return jsonify({
 
             "success": True,
 
-            "output": output,
-
             "current_reel": current_reel,
 
             "interest": interest,
 
-            "recommended_reel": recommended_reel,
+            "why_interest": why_interest,
+
+            "recommendation": recommendation,
 
             "category": category,
+
+            "why_recommendation": why_recommendation,
 
             "difficulty": difficulty,
 
             "confidence": confidence,
 
-            "recommendations": recommendations,
+            "semantic_score": semantic_score,
 
-            "error": result.stderr
+            "semantic_percentage": round(
+                semantic_score * 100
+            )
 
         })
 
@@ -141,7 +197,7 @@ def recommend():
 
 
 # ============================================================
-# RUN SERVER
+# START FLASK
 # ============================================================
 
 if __name__ == "__main__":
